@@ -1,0 +1,8 @@
+*.swp
+*.swo
+build
+*.png
+*.glb
+*.gltf
+*.blend
+*.blend1
