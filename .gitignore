@@ -6,3 +6,5 @@ build
 *.gltf
 *.blend
 *.blend1
+*.obj
+*.mtl

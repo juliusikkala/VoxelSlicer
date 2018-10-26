@@ -22,9 +22,10 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
+#include <memory>
 #include <getopt.h>
-#include "stb_image.h"
 #include "stb_image_write.h"
+#include "model.hh"
 #define GL_MAJOR 3
 #define GL_MINOR 3
 #define HELP 1
@@ -103,7 +104,7 @@ static bool parse_args(int argc, char** argv)
 
 help_print:
     printf(
-        "Usage: %s [-d dimensions] [-o output_prefix] model.glb\n"
+        "Usage: %s [-d dimensions] [-o output_prefix] model_file\n"
         "\ndimensions defines the size of the output. It can have one of the "
         "following formats:\n"
         "\tWIDTHxHEIGHTxLAYERS\n"
@@ -117,6 +118,17 @@ help_print:
         argv[0]
     );
     return false;
+}
+
+static glm::uvec2 except(glm::uvec3 dim, unsigned index)
+{
+    switch(index)
+    {
+    case 0: return glm::uvec2(dim.y, dim.z);
+    case 1: return glm::uvec2(dim.x, dim.z);
+    case 2: return glm::uvec2(dim.x, dim.y);
+    default: return glm::uvec2(0);
+    }
 }
 
 static glm::uvec2 max2(glm::uvec3 dim)
@@ -174,12 +186,6 @@ static bool init(glm::uvec3 dim)
         std::cerr << "Unable to initialize EGL\n";
         return false;
     }
-
-#ifndef NDEBUG
-    std::cout << "EGL version: "
-        << egl_data.major << "." << egl_data.minor
-        << std::endl;
-#endif
 
     EGLint config_count;
 
@@ -279,13 +285,7 @@ public:
 
     glm::uvec2 get_size(unsigned axis) const
     {
-        switch(axis)
-        {
-        case 0: return glm::uvec2(dim.y, dim.z);
-        case 1: return glm::uvec2(dim.x, dim.z);
-        case 2: return glm::uvec2(dim.x, dim.y);
-        default: return glm::uvec2(0);
-        }
+        return except(dim, axis);
     }
 
     glm::uvec3 get_layer_pos(
@@ -376,23 +376,38 @@ int main(int argc, char** argv)
 {
     if(!parse_args(argc, argv)) return 1;
 
+    std::unique_ptr<model> m;
+    try
+    {
+        m.reset(new model(options.input_path));
+    }
+    catch(const std::runtime_error& err)
+    {
+        std::cerr << err.what() << std::endl;
+        return 2;
+    }
+
     // _NOT_ sparse, so large sizes will kill your performance and memory
     volume v(glm::uvec3(10));
-    if(!init(v.get_dim())) return 1;
+    if(!init(v.get_dim())) return 3;
 
     // Both front and back faces in one pass to avoid extra passes
     glDisable(GL_CULL_FACE);
     // Disable padding in glReadPixels to make reading simpler
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearStencil(0);
+
+    m->init_gl();
 
     // Render scene from all axes
     for(unsigned axis = 0; axis < 3; ++axis)
     {
+        glm::uvec2 size = v.get_size(axis);
+        glViewport(0, 0, size.x, size.y);
         // Render all layers
         for(unsigned layer = 0; layer < v.get_dim()[axis]; ++layer)
         {
-            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-            glClearStencil(0);
             glClear(
                 GL_COLOR_BUFFER_BIT |
                 GL_STENCIL_BUFFER_BIT |

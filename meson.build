@@ -5,9 +5,10 @@ project(
 )
 
 src = [
-  'src/main.cpp',
-  'src/stb_image.cpp',
-  'src/stb_image_write.cpp',
+  'src/main.cc',
+  'src/model.cc',
+  'src/stb_image.cc',
+  'src/stb_image_write.cc',
 ]
 
 cc = meson.get_compiler('cpp')
@@ -15,6 +16,7 @@ m_dep = cc.find_library('m', required : false)
 egl_dep = dependency('egl')
 glew_dep = dependency('glew')
 glm_dep = dependency('glm')
+assimp_dep = dependency('assimp')
 
 incdir = include_directories('src')
 
@@ -26,6 +28,7 @@ executable(
     egl_dep,
     glm_dep,
     glew_dep,
+    assimp_dep,
   ],
   include_directories: [incdir],
   install: true,
