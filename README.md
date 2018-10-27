@@ -62,7 +62,7 @@ be one of the following:
 `-f` enables volume filling. This will fill all volume enclosed by the outermost
 surfaces. It doesn't detect fully enclosed cavities, so those will be filled as
 well. Note that filling may be very slow. It can also fail if the voxelization
-contains holes. `fill\_type` may be one of the following:
+contains holes. `fill_type` may be one of the following:
 
 | fill\_type   | Meaning                                       |
 |--------------|-----------------------------------------------|
