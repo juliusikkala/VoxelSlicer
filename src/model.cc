@@ -255,6 +255,7 @@ model::mesh::mesh(mesh&& other)
     index_count(other.index_count),
     vertices(other.vertices),
     vertex_count(other.vertex_count),
+    has_uv(other.has_uv),
     vao(other.vao),
     ibo(other.ibo),
     vbo(other.vbo)
