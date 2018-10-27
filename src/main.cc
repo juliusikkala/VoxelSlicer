@@ -755,6 +755,8 @@ static glm::mat4 get_proj(
         right_top = glm::vec2(bb_max.x, bb_min.y);
         break;
     }
+    far -= step * 0.001f;
+    near += step * 0.001f;
     glm::mat4 proj = glm::ortho(
         left_bottom.x,
         right_top.x,
