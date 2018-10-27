@@ -74,3 +74,6 @@ contains holes. `fill_type` may be one of the following:
 
 Despite the word 'Averages', this will usually look like nearest-neighbor
 interpolation on large-scale images.
+
+`-s` enables single-file output. The output layers are arranged vertically one
+after another.

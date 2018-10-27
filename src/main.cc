@@ -34,6 +34,7 @@
 #define DIMENSIONS 'd'
 #define INTERPOLATION 'i'
 #define FILL 'f'
+#define SINGLE 's'
 #define OUTPUT 'o'
 
 struct
@@ -107,6 +108,7 @@ struct
     std::string input_path;
     GLint interpolation = GL_LINEAR_MIPMAP_LINEAR;
     fill_mode fill = FILL_NONE;
+    bool single_file = false;
     std::string output_path = "slice";
     glm::ivec3 dim = glm::ivec3(-1);
 } options;
@@ -125,7 +127,7 @@ static bool parse_args(int argc, char** argv)
 
     int val = 0;
     while(
-        (val = getopt_long(argc, argv, "d:o:i:f:", longopts, &indexptr)) != -1
+        (val = getopt_long(argc, argv, "d:o:i:f:s", longopts, &indexptr)) != -1
     ){
         char* endptr = optarg-1;
         unsigned axis = 0;
@@ -187,6 +189,9 @@ static bool parse_args(int argc, char** argv)
                 goto help_print;
             }
             break;
+        case SINGLE:
+            options.single_file = true;
+            break;
         case HELP:
             goto help_print;
         default:
@@ -205,7 +210,7 @@ static bool parse_args(int argc, char** argv)
 help_print:
     printf(
         "Usage: %s [-d dimensions] [-o output_prefix] [-i interpolation] "
-        "[-f fill_type] model_file\n"
+        "[-f fill_type] [-s] model_file\n"
         "\ndimensions defines the size of the output. It can have one of the "
         "following formats:\n"
         "\tWIDTHxHEIGHTxLAYERS\n"
@@ -230,7 +235,9 @@ help_print:
         "\tvolumeplus\n"
         "\tflatx\n"
         "\tflaty\n"
-        "\tflatz\n",
+        "\tflatz\n"
+        "\n-s enables single-file output. The output layers are arranged "
+        "vertically one after another.\n",
         argv[0]
     );
     return false;
@@ -609,33 +616,69 @@ public:
         delete [] outside;
     }
 
-    void write_layers(const std::string& path_prefix, unsigned axis)
-    {
+    void write_layers(
+        const std::string& path_prefix,
+        unsigned axis,
+        bool single_file
+    ){
         glm::uvec2 size = get_size(axis);
-        unsigned layer_str_width = num_len(dim[axis], 10);
-        for(unsigned layer = 0; layer < dim[axis]; ++layer)
+        if(single_file)
         {
+            uint8_t* image_buffer = new uint8_t[dim.x*dim.y*dim.z*4];
             std::stringstream path;
-            path << path_prefix
-                 << std::setw(layer_str_width) << std::setfill('0') << layer
-                 << ".png";
-            for(unsigned y = 0; y < size.y; ++y)
+            path << path_prefix << ".png";
+            for(unsigned layer = 0; layer < dim[axis]; ++layer)
             {
-                for(unsigned x = 0; x < size.x; ++x)
+                for(unsigned y = 0; y < size.y; ++y)
                 {
-                    glm::vec4 color = operator[](get_layer_pos(
-                        layer, axis, glm::uvec2(x, y)
-                    )).color;
-                    unsigned o = x + y * size.x;
-                    layer_buffer[o*4] = color.x*255;
-                    layer_buffer[o*4+1] = color.y*255;
-                    layer_buffer[o*4+2] = color.z*255;
-                    layer_buffer[o*4+3] = color.w*255;
+                    for(unsigned x = 0; x < size.x; ++x)
+                    {
+                        glm::vec4 color = operator[](get_layer_pos(
+                            layer, axis, glm::uvec2(x, y)
+                        )).color;
+                        unsigned o = x + y * size.x + layer * size.x * size.y;
+                        image_buffer[o*4] = color.x*255;
+                        image_buffer[o*4+1] = color.y*255;
+                        image_buffer[o*4+2] = color.z*255;
+                        image_buffer[o*4+3] = color.w*255;
+                    }
                 }
             }
             stbi_write_png(
-                path.str().c_str(), size.x, size.y, 4, layer_buffer, 4*size.x
+                path.str().c_str(),
+                size.x, size.y * dim[axis],
+                4, image_buffer, 4*size.x
             );
+            delete [] image_buffer;
+        }
+        else
+        {
+            unsigned layer_str_width = num_len(dim[axis], 10);
+            for(unsigned layer = 0; layer < dim[axis]; ++layer)
+            {
+                std::stringstream path;
+                path << path_prefix
+                     << std::setw(layer_str_width) << std::setfill('0') << layer
+                     << ".png";
+                for(unsigned y = 0; y < size.y; ++y)
+                {
+                    for(unsigned x = 0; x < size.x; ++x)
+                    {
+                        glm::vec4 color = operator[](get_layer_pos(
+                            layer, axis, glm::uvec2(x, y)
+                        )).color;
+                        unsigned o = x + y * size.x;
+                        layer_buffer[o*4] = color.x*255;
+                        layer_buffer[o*4+1] = color.y*255;
+                        layer_buffer[o*4+2] = color.z*255;
+                        layer_buffer[o*4+3] = color.w*255;
+                    }
+                }
+                stbi_write_png(
+                    path.str().c_str(),
+                    size.x, size.y, 4, layer_buffer, 4*size.x
+                );
+            }
         }
     }
 
@@ -790,7 +833,7 @@ int main(int argc, char** argv)
 
         if(options.fill != FILL_NONE) v.fill(*m, options.fill);
 
-        v.write_layers(options.output_path, 2);
+        v.write_layers(options.output_path, 2, options.single_file);
     }
     deinit();
     return 0;
