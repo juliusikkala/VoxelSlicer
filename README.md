@@ -63,11 +63,6 @@ be one of the following:
 surfaces. It doesn't detect fully enclosed cavities, so those will be filled as
 well. Note that filling may be very slow. It can also fail if the voxelization
 contains holes. `fill\_type` may be one of the following:
-\tflatplus\n
-\tvolumeplus\n
-\tflatx\n
-\tflaty\n
-\tflatz\n
 
 | fill\_type   | Meaning                                       |
 |--------------|-----------------------------------------------|
