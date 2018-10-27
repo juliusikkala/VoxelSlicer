@@ -29,7 +29,7 @@ class shader;
 class model
 {
 public:
-    explicit model(const std::string& path);
+    model(const std::string& path, GLint texture_interpolation);
     ~model();
 
     void init_gl();

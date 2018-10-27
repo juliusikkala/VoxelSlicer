@@ -32,6 +32,7 @@
 #define GL_MINOR 3
 #define HELP 1
 #define DIMENSIONS 'd'
+#define INTERPOLATION 'i'
 #define OUTPUT 'o'
 
 struct
@@ -43,13 +44,6 @@ struct
     EGLContext ctx;
     glm::uvec2 size;
 } egl_data;
-
-struct
-{
-    std::string input_path;
-    std::string output_path = "slice";
-    glm::ivec3 dim = glm::ivec3(-1);
-} options;
 
 const std::string fshader_textured = 
     "#version 330 core\n"
@@ -97,6 +91,14 @@ const std::string vshader_no_texture =
     "    pos = p.xyz;\n"
     "}";
 
+struct
+{
+    std::string input_path;
+    GLint interpolation = GL_LINEAR_MIPMAP_LINEAR;
+    std::string output_path = "slice";
+    glm::ivec3 dim = glm::ivec3(-1);
+} options;
+
 static bool parse_args(int argc, char** argv)
 {
     int indexptr = 0;
@@ -104,11 +106,12 @@ static bool parse_args(int argc, char** argv)
     struct option longopts[] = {
         { "help", no_argument, NULL, HELP },
         { "dimensions", required_argument, NULL, DIMENSIONS },
-        { "output", required_argument, NULL, OUTPUT }
+        { "output", required_argument, NULL, OUTPUT },
+        { "interpolation", required_argument, NULL, INTERPOLATION },
     };
 
     int val = 0;
-    while((val = getopt_long(argc, argv, "d:o:", longopts, &indexptr)) != -1)
+    while((val = getopt_long(argc, argv, "d:o:i:", longopts, &indexptr)) != -1)
     {
         char* endptr = optarg-1;
         unsigned axis = 0;
@@ -140,9 +143,22 @@ static bool parse_args(int argc, char** argv)
         case OUTPUT:
             options.output_path = optarg;
             break;
+        case INTERPOLATION:
+            if(!strcmp(optarg, "n") || !strcmp(optarg, "nearest"))
+                options.interpolation = GL_NEAREST;
+            else if(!strcmp(optarg, "l") || !strcmp(optarg, "linear"))
+                options.interpolation = GL_LINEAR;
+            else if(!strcmp(optarg, "m") || !strcmp(optarg, "mipmap"))
+                options.interpolation = GL_LINEAR_MIPMAP_LINEAR;
+            else {
+                printf("Unknown interpolation mode %s\n", optarg);
+                goto help_print;
+            }
+            break;
         case HELP:
             goto help_print;
-        default: break;
+        default:
+            goto help_print;
         }
     }
 
@@ -158,10 +174,10 @@ help_print:
     printf(
         "Usage: %s [-d dimensions] [-o output_prefix] model_file\n"
         "\ndimensions defines the size of the output. It can have one of the "
-        "following formats:\n"
+        "following\nformats:\n"
         "\tWIDTHxHEIGHTxLAYERS\n"
         "\tWIDTHxLAYERS\n"
-        "\tLAYERS\n"
+        "\tLAYERS\n\n"
         "WIDTH and HEIGHT define the size of the output image, LAYERS defines "
         "the number\nof output images. If either HEIGHT or WIDTH are missing, "
         "they are calculated\nbased on model dimensions such that the aspect "
@@ -395,8 +411,7 @@ public:
         {
             std::stringstream path;
             path << path_prefix
-                 << std::setw(layer_str_width) << std::setfill('0')
-                 << dim[axis] - layer - 1
+                 << std::setw(layer_str_width) << std::setfill('0') << layer
                  << ".png";
             for(unsigned y = 0; y < size.y; ++y)
             {
@@ -459,42 +474,43 @@ static glm::mat4 get_proj(
     {
     case 0:
         base = glm::mat4(
-            0,0,1,0,
-            -1,0,0,0,
-            0,-1,0,0,
+            0,0,-1,0,
+            1,0,0,0,
+            0,1,0,0,
             0,0,0,1
         );
-        left_bottom = glm::vec2(bb_min.y, bb_min.z);
-        right_top = glm::vec2(bb_max.y, bb_max.z);
+        left_bottom = glm::vec2(bb_max.y, bb_max.z);
+        right_top = glm::vec2(bb_min.y, bb_min.z);
+        far = bb_min[axis] + step * layer;
+        near = bb_min[axis] + step * (layer + 1);
         break;
     case 1:
         base = glm::mat4(
             1,0,0,0,
             0,0,-1,0,
-            0,-1,0,0,
+            0,1,0,0,
             0,0,0,1
         );
-        left_bottom = glm::vec2(bb_min.x, bb_min.z);
-        right_top = glm::vec2(bb_max.x, bb_max.z);
+        left_bottom = glm::vec2(bb_min.x, bb_max.z);
+        right_top = glm::vec2(bb_max.x, bb_min.z);
         break;
     default:
     case 2:
         base = glm::mat4(
             1,0,0,0,
             0,1,0,0,
-            0,0,1,0,
+            0,0,-1,0,
             0,0,0,1
         );
-        left_bottom = glm::vec2(bb_min.x, bb_min.y);
-        right_top = glm::vec2(bb_max.x, bb_max.y);
+        left_bottom = glm::vec2(bb_min.x, bb_max.y);
+        right_top = glm::vec2(bb_max.x, bb_min.y);
         break;
     }
     glm::mat4 proj = glm::ortho(
         left_bottom.x,
         right_top.x,
-        // ReadPixels flips vertically, so we'll have to deal with that here.
-        right_top.y,
         left_bottom.y,
+        right_top.y,
         near,
         far
     );
@@ -508,7 +524,7 @@ int main(int argc, char** argv)
     std::unique_ptr<model> m;
     try
     {
-        m.reset(new model(options.input_path));
+        m.reset(new model(options.input_path, options.interpolation));
     }
     catch(const std::runtime_error& err)
     {

@@ -26,7 +26,7 @@
 #include "stb_image.h"
 #include "shader.hh"
 
-model::model(const std::string& path)
+model::model(const std::string& path, GLint interpolation)
 {
     Assimp::Importer importer;
     importer.SetPropertyInteger(
@@ -85,14 +85,14 @@ model::model(const std::string& path)
                                 GL_BGRA,
                                 tex->pcData,
                                 glm::uvec2(tex->mWidth, tex->mHeight),
-                                GL_LINEAR_MIPMAP_LINEAR
+                                interpolation
                             )
                         ).first;
                     }
                     // External texture
                     else it = textures.emplace(
                         path,
-                        texture(path, GL_LINEAR_MIPMAP_LINEAR)
+                        texture(path, interpolation)
                     ).first;
                 }
                 outmat.tex = &it->second;
