@@ -383,7 +383,8 @@ public:
         {
             std::stringstream path;
             path << path_prefix
-                 << std::setw(layer_str_width) << std::setfill('0') << layer
+                 << std::setw(layer_str_width) << std::setfill('0')
+                 << dim[axis] - layer - 1
                  << ".png";
             for(unsigned y = 0; y < size.y; ++y)
             {
@@ -515,7 +516,7 @@ int main(int argc, char** argv)
         shader textured(vshader_textured, fshader_textured);
 
         // Both front and back faces in one pass to avoid extra passes
-        glDisable(GL_CULL_FACE);
+        glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_STENCIL_TEST);
         glStencilFunc(GL_ALWAYS, 1, 0xFF);
@@ -529,23 +530,27 @@ int main(int argc, char** argv)
 
         m->init_gl();
 
-        // Render scene from all axes
-        for(unsigned axis = 0; axis < 3; ++axis)
+        // Render scene from 6 directions
+        for(unsigned dir = 0; dir < 2; ++dir)
         {
-            //if(axis == 0) ++axis;
-            glm::uvec2 size = v.get_size(axis);
-            glViewport(0, 0, size.x, size.y);
-            // Render all layers
-            for(unsigned layer = 0; layer < dim[axis]; ++layer)
+            glCullFace(dir?GL_FRONT:GL_BACK);
+
+            for(unsigned axis = 0; axis < 3; ++axis)
             {
-                glClear(
-                    GL_COLOR_BUFFER_BIT |
-                    GL_STENCIL_BUFFER_BIT |
-                    GL_DEPTH_BUFFER_BIT
-                );
-                glm::mat4 proj(get_proj(dim, axis, layer, *m));
-                m->draw(proj, textured, no_texture);
-                v.read_gl_layer(layer, axis);
+                glm::uvec2 size = v.get_size(axis);
+                glViewport(0, 0, size.x, size.y);
+                // Render all layers
+                for(unsigned layer = 0; layer < dim[axis]; ++layer)
+                {
+                    glClear(
+                        GL_COLOR_BUFFER_BIT |
+                        GL_STENCIL_BUFFER_BIT |
+                        GL_DEPTH_BUFFER_BIT
+                    );
+                    glm::mat4 proj(get_proj(dim, axis, layer, *m));
+                    m->draw(proj, textured, no_texture);
+                    v.read_gl_layer(layer, axis);
+                }
             }
         }
 
