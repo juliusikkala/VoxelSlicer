@@ -271,7 +271,7 @@ static int num_len(uint64_t u, int base)
 static bool init(glm::uvec3 dim)
 {
     // Make sure all directions can be rendered to the same buffer
-    egl_data.size = max2(dim);
+    egl_data.size = glm::uvec2(glm::max(glm::max(dim.x, dim.y), dim.z));
 
     EGLint cfg_attribs[] = {
         EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
@@ -804,6 +804,10 @@ int main(int argc, char** argv)
 
         // Disable padding in glReadPixels to make reading simpler
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+        glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClearStencil(0);
 
