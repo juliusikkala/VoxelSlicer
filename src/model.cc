@@ -24,6 +24,7 @@
 #include <assimp/postprocess.h>
 #include <assimp/Importer.hpp>
 #include "stb_image.h"
+#include "shader.hh"
 
 model::model(const std::string& path)
 {
@@ -48,6 +49,9 @@ model::model(const std::string& path)
     );
 
     if(!scene) throw std::runtime_error("Failed to open file " + path);
+
+    bb_min = glm::vec3(INFINITY);
+    bb_max = glm::vec3(-INFINITY);
 
     for(unsigned i = 0; i < scene->mNumMaterials; ++i)
     {
@@ -80,12 +84,16 @@ model::model(const std::string& path)
                             texture(
                                 GL_BGRA,
                                 tex->pcData,
-                                glm::uvec2(tex->mWidth, tex->mHeight)
+                                glm::uvec2(tex->mWidth, tex->mHeight),
+                                GL_LINEAR_MIPMAP_LINEAR
                             )
                         ).first;
                     }
                     // External texture
-                    else it = textures.emplace(path, texture(path)).first;
+                    else it = textures.emplace(
+                        path,
+                        texture(path, GL_LINEAR_MIPMAP_LINEAR)
+                    ).first;
                 }
                 outmat.tex = &it->second;
             }
@@ -110,12 +118,41 @@ model::model(const std::string& path)
         if(!inmesh->HasFaces()) throw std::runtime_error("Mesh has no faces");
         if(!inmesh->HasPositions())
             throw std::runtime_error("Mesh has no positions");
-        meshes.push_back(mesh(inmesh));
+        meshes.push_back(mesh(inmesh, bb_min, bb_max));
     }
 }
 
 model::~model()
 {
+}
+
+void model::draw(glm::mat4 proj, shader& textured, shader& no_texture)
+{
+    for(mesh& m: meshes)
+    {
+        material* mat = &materials[m.material_index];
+        GLint mvp;
+        if(mat->tex)
+        {
+            textured.bind();
+            GLint albedo_tex = textured.get_uniform("albedo_tex");
+            mvp = textured.get_uniform("mvp");
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mat->tex->tex);
+            glUniform1i(albedo_tex, 0);
+        }
+        else
+        {
+            no_texture.bind();
+            GLint albedo = no_texture.get_uniform("albedo");
+            mvp = no_texture.get_uniform("mvp");
+            glUniform4fv(albedo, 1, (float*)&mat->color);
+        }
+
+        glUniformMatrix4fv(mvp, 1, false, (float*)&proj);
+        glBindVertexArray(m.vao);
+        glDrawElements(GL_TRIANGLES, m.index_count, GL_UNSIGNED_INT, 0);
+    }
 }
 
 void model::init_gl()
@@ -130,20 +167,23 @@ void model::get_bb(glm::vec3& bb_min, glm::vec3& bb_max) const
     bb_max = this->bb_max;
 }
 
-model::texture::texture(const std::string& path)
-: data(0), size(0), tex(0), format(GL_RGBA)
+model::texture::texture(const std::string& path, GLint interpolation)
+: data(0), size(0), tex(0), format(GL_RGBA), interpolation(interpolation)
 {
     int n;
     data = stbi_load(path.c_str(), (int*)&size.x, (int*)&size.y, &n, 4);
     if(!data) throw std::runtime_error("Failed to read texture " + path);
 }
 
-model::texture::texture(GLenum format, void* data, glm::uvec2 size)
-: data(data), size(size), tex(0), format(format) {}
+model::texture::texture(
+    GLenum format, void* data, glm::uvec2 size, GLint interpolation
+)
+: data(data), size(size), tex(0), format(format), interpolation(interpolation)
+{}
 
 model::texture::texture(texture&& other)
-:   data(other.data), size(other.size),
-    tex(other.tex), format(other.format)
+:   data(other.data), size(other.size), tex(other.tex), format(other.format),
+    interpolation(other.interpolation)
 {
     other.data = nullptr;
     other.tex = 0;
@@ -165,10 +205,13 @@ void model::texture::init_gl()
         GL_TEXTURE_2D, 0, GL_RGBA8, size.x, size.y,
         0, format, GL_UNSIGNED_BYTE, data
     );
-    glGenerateMipmap(GL_TEXTURE_2D);
+    if(interpolation == GL_LINEAR_MIPMAP_LINEAR)
+        glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, interpolation);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, interpolation);
 }
 
-model::mesh::mesh(aiMesh* inmesh)
+model::mesh::mesh(aiMesh* inmesh, glm::vec3& bb_min, glm::vec3& bb_max)
 : vao(0), ibo(0), vbo(0)
 {
     indices = new uint32_t[inmesh->mNumFaces*3];
@@ -189,9 +232,13 @@ model::mesh::mesh(aiMesh* inmesh)
 
     for(unsigned i = 0; i < vertex_count; ++i)
     {
-        vertices[i*stride] = inmesh->mVertices[i].x;
-        vertices[i*stride+1] = inmesh->mVertices[i].z;
-        vertices[i*stride+2] = inmesh->mVertices[i].y;
+        aiVector3D ai_p = inmesh->mVertices[i];
+        glm::vec3 p(ai_p.x, ai_p.y, ai_p.z);
+        bb_min = glm::min(p, bb_min);
+        bb_max = glm::max(p, bb_max);
+        vertices[i*stride] = p.x;
+        vertices[i*stride+1] = p.y;
+        vertices[i*stride+2] = p.z;
         if(has_uv)
         {
             vertices[i*stride+3] = inmesh->mTextureCoords[0][i].x;

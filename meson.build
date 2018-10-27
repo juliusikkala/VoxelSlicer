@@ -7,6 +7,7 @@ project(
 src = [
   'src/main.cc',
   'src/model.cc',
+  'src/shader.cc',
   'src/stb_image.cc',
   'src/stb_image_write.cc',
 ]

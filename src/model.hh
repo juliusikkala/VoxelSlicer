@@ -25,21 +25,25 @@
 #include <map>
 
 class aiMesh;
+class shader;
 class model
 {
 public:
-    model(const std::string& path);
+    explicit model(const std::string& path);
     ~model();
 
     void init_gl();
+    void draw(glm::mat4 proj, shader& textured, shader& no_texture);
 
     void get_bb(glm::vec3& bb_min, glm::vec3& bb_max) const;
 
 private:
     struct texture
     {
-        texture(const std::string& path);
-        texture(GLenum format, void* data, glm::uvec2 size);
+        texture(const std::string& path, GLint interpolation);
+        texture(
+            GLenum format, void* data, glm::uvec2 size, GLint interpolation
+        );
         texture(texture&& other);
         ~texture();
 
@@ -49,6 +53,7 @@ private:
         glm::uvec2 size;
         GLuint tex;
         GLenum format;
+        GLint interpolation;
     };
 
     struct material
@@ -59,7 +64,7 @@ private:
 
     struct mesh
     {
-        mesh(aiMesh* inmesh);
+        mesh(aiMesh* inmesh, glm::vec3& bb_min, glm::vec3& bb_max);
         mesh(mesh&& other);
         ~mesh();
 

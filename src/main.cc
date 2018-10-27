@@ -18,6 +18,7 @@
 */
 #include <EGL/egl.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <GL/glew.h>
 #include <iostream>
 #include <iomanip>
@@ -25,6 +26,7 @@
 #include <memory>
 #include <getopt.h>
 #include "stb_image_write.h"
+#include "shader.hh"
 #include "model.hh"
 #define GL_MAJOR 3
 #define GL_MINOR 3
@@ -48,6 +50,40 @@ struct
     std::string output_path = "slice";
     glm::ivec3 dim = glm::ivec3(-1);
 } options;
+
+const std::string fshader_textured = 
+    "#version 330 core\n"
+    "in vec2 uv;\n"
+    "uniform sampler2D albedo_tex;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    color = texture(albedo_tex, uv);\n"
+    "}";
+
+const std::string vshader_textured = 
+    "#version 330 core\n"
+    "layout (location = 0) in vec3 pos;\n"
+    "layout (location = 1) in vec2 in_uv;\n"
+    "uniform mat4 mvp;\n"
+    "out vec2 uv;\n"
+    "void main() {\n"
+    "    gl_Position = mvp * vec4(pos, 1.0f);\n"
+    "    uv = in_uv;\n"
+    "}";
+
+const std::string fshader_no_texture = 
+    "#version 330 core\n"
+    "uniform vec4 albedo;\n"
+    "out vec4 color;\n"
+    "void main() { color = albedo; }";
+
+const std::string vshader_no_texture = 
+    "#version 330 core\n"
+    "layout (location = 0) in vec3 pos;\n"
+    "uniform mat4 mvp;\n"
+    "void main() {\n"
+    "    gl_Position = mvp * vec4(pos, 1.0f);\n"
+    "}";
 
 static bool parse_args(int argc, char** argv)
 {
@@ -78,7 +114,11 @@ static bool parse_args(int argc, char** argv)
                 goto help_print;
             }
 
-            if(axis == 0) options.dim.z = options.dim.x;
+            if(axis == 0)
+            {
+                options.dim.z = options.dim.x;
+                options.dim.x = -1;
+            }
             else if(axis == 1)
             {
                 options.dim.z = options.dim.y;
@@ -111,9 +151,9 @@ help_print:
         "\tWIDTHxLAYERS\n"
         "\tLAYERS\n"
         "WIDTH and HEIGHT define the size of the output image, LAYERS defines "
-        "the number\nof output images. If HEIGHT is missing, it is calculated "
-        "based on model\ncoordinates such that the aspect ratio is correct. If "
-        "WIDTH is missing, it is\nassumed to be equal to LAYERS.\n"
+        "the number\nof output images. If either HEIGHT or WIDTH are missing, "
+        "they are calculated\nbased on model dimensions such that the aspect "
+        "ratio is correct.\n"
         "\noutput_prefix is the prefix for all output images.\n",
         argv[0]
     );
@@ -372,6 +412,76 @@ private:
     uint8_t* stencil_buffer;
 };
 
+static glm::uvec3 deduce_dim(glm::ivec3 arg, model& m)
+{
+    glm::vec3 res(arg);
+    glm::vec3 bb_min, bb_max;
+    m.get_bb(bb_min, bb_max);
+    glm::vec3 size = bb_max - bb_min;
+
+    if(arg.z <= 0) res.z = 10;
+    if(arg.x <= 0) res.x = res.z / size.z * size.x;
+    if(arg.y <= 0) res.y = res.x / size.x * size.y;
+    return glm::uvec3(glm::round(res));
+}
+
+static glm::mat4 get_proj(
+    glm::uvec3 dim,
+    unsigned axis,
+    unsigned layer,
+    model& m
+){
+    glm::vec3 bb_min, bb_max;
+    m.get_bb(bb_min, bb_max);
+    glm::vec3 size = bb_max - bb_min;
+    float depth = size[axis];
+    float step = depth/dim[axis];
+    float far = bb_min[axis] + step * layer;
+    float near = bb_min[axis] + step * (layer + 1);
+    glm::vec2 left_bottom;
+    glm::vec2 right_top;
+
+    glm::mat4 base;
+    switch(axis)
+    {
+    case 0:
+        base = glm::mat4(
+            0,1,0,0,
+            0,0,1,0,
+            1,0,0,0,
+            0,0,0,1
+        );
+        left_bottom = glm::vec2(bb_min.y, bb_min.z);
+        right_top = glm::vec2(bb_max.y, bb_max.z);
+        break;
+    case 1:
+        base = glm::mat4(
+            1,0,0,0,
+            0,0,-1,0,
+            0,1,0,0,
+            0,0,0,1
+        );
+        left_bottom = glm::vec2(bb_min.x, bb_min.z);
+        right_top = glm::vec2(bb_max.x, bb_max.z);
+        break;
+    default:
+    case 2:
+        base = glm::mat4(1.0f);
+        left_bottom = glm::vec2(bb_min.x, bb_min.y);
+        right_top = glm::vec2(bb_max.x, bb_max.y);
+        break;
+    }
+    glm::mat4 proj = glm::ortho(
+        left_bottom.x,
+        right_top.x,
+        left_bottom.y,
+        right_top.y,
+        near,
+        far
+    );
+    return proj * base;
+}
+
 int main(int argc, char** argv)
 {
     if(!parse_args(argc, argv)) return 1;
@@ -387,37 +497,53 @@ int main(int argc, char** argv)
         return 2;
     }
 
+    glm::uvec3 dim = deduce_dim(options.dim, *m);
+
     // _NOT_ sparse, so large sizes will kill your performance and memory
-    volume v(glm::uvec3(10));
-    if(!init(v.get_dim())) return 3;
+    volume v(dim);
+    if(!init(dim))
+        return 3;
 
-    // Both front and back faces in one pass to avoid extra passes
-    glDisable(GL_CULL_FACE);
-    // Disable padding in glReadPixels to make reading simpler
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClearStencil(0);
-
-    m->init_gl();
-
-    // Render scene from all axes
-    for(unsigned axis = 0; axis < 3; ++axis)
     {
-        glm::uvec2 size = v.get_size(axis);
-        glViewport(0, 0, size.x, size.y);
-        // Render all layers
-        for(unsigned layer = 0; layer < v.get_dim()[axis]; ++layer)
-        {
-            glClear(
-                GL_COLOR_BUFFER_BIT |
-                GL_STENCIL_BUFFER_BIT |
-                GL_DEPTH_BUFFER_BIT
-            );
-            v.read_gl_layer(layer, axis);
-        }
-    }
+        shader no_texture(vshader_no_texture, fshader_no_texture);
+        shader textured(vshader_textured, fshader_textured);
 
-    v.write_layers(options.output_path, 2);
+        // Both front and back faces in one pass to avoid extra passes
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_ALWAYS, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        glStencilMask(0xFF);
+
+        // Disable padding in glReadPixels to make reading simpler
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearStencil(0);
+
+        m->init_gl();
+
+        // Render scene from all axes
+        for(unsigned axis = 0; axis < 3; ++axis)
+        {
+            glm::uvec2 size = v.get_size(axis);
+            glViewport(0, 0, size.x, size.y);
+            // Render all layers
+            for(unsigned layer = 0; layer < dim[axis]; ++layer)
+            {
+                glClear(
+                    GL_COLOR_BUFFER_BIT |
+                    GL_STENCIL_BUFFER_BIT |
+                    GL_DEPTH_BUFFER_BIT
+                );
+                glm::mat4 proj(get_proj(dim, axis, layer, *m));
+                m->draw(proj, textured, no_texture);
+                v.read_gl_layer(layer, axis);
+            }
+        }
+
+        v.write_layers(options.output_path, 2);
+    }
     deinit();
     return 0;
 }
