@@ -53,36 +53,48 @@ struct
 
 const std::string fshader_textured = 
     "#version 330 core\n"
+    "in vec3 pos;\n"
     "in vec2 uv;\n"
     "uniform sampler2D albedo_tex;\n"
     "out vec4 color;\n"
     "void main() {\n"
+    "    if(abs(dFdx(pos.z)) > 2.0 || abs(dFdy(pos.z)) > 2.0) discard;\n"
     "    color = texture(albedo_tex, uv);\n"
     "}";
 
 const std::string vshader_textured = 
     "#version 330 core\n"
-    "layout (location = 0) in vec3 pos;\n"
+    "layout (location = 0) in vec3 in_pos;\n"
     "layout (location = 1) in vec2 in_uv;\n"
     "uniform mat4 mvp;\n"
     "out vec2 uv;\n"
+    "out vec3 pos;\n"
     "void main() {\n"
-    "    gl_Position = mvp * vec4(pos, 1.0f);\n"
+    "    vec4 p = mvp * vec4(in_pos, 1.0f);\n"
+    "    gl_Position = p;\n"
+    "    pos = p.xyz;\n"
     "    uv = in_uv;\n"
     "}";
 
 const std::string fshader_no_texture = 
     "#version 330 core\n"
+    "in vec3 pos;\n"
     "uniform vec4 albedo;\n"
     "out vec4 color;\n"
-    "void main() { color = albedo; }";
+    "void main() {\n"
+    "    if(abs(dFdx(pos.z)) > 2.0 || abs(dFdy(pos.z)) > 2.0) discard;\n"
+    "    color = albedo;\n"
+    "}";
 
 const std::string vshader_no_texture = 
     "#version 330 core\n"
-    "layout (location = 0) in vec3 pos;\n"
+    "layout (location = 0) in vec3 in_pos;\n"
     "uniform mat4 mvp;\n"
+    "out vec3 pos;\n"
     "void main() {\n"
-    "    gl_Position = mvp * vec4(pos, 1.0f);\n"
+    "    vec4 p = mvp * vec4(in_pos, 1.0f);\n"
+    "    gl_Position = p;\n"
+    "    pos = p.xyz;\n"
     "}";
 
 static bool parse_args(int argc, char** argv)
