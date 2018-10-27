@@ -436,8 +436,8 @@ static glm::mat4 get_proj(
     glm::vec3 size = bb_max - bb_min;
     float depth = size[axis];
     float step = depth/dim[axis];
-    float far = bb_min[axis] + step * layer;
-    float near = bb_min[axis] + step * (layer + 1);
+    float far = bb_max[axis] - step * (layer + 1);
+    float near = bb_max[axis] - step * layer;
     glm::vec2 left_bottom;
     glm::vec2 right_top;
 
@@ -446,9 +446,9 @@ static glm::mat4 get_proj(
     {
     case 0:
         base = glm::mat4(
-            0,1,0,0,
             0,0,1,0,
-            1,0,0,0,
+            -1,0,0,0,
+            0,-1,0,0,
             0,0,0,1
         );
         left_bottom = glm::vec2(bb_min.y, bb_min.z);
@@ -458,7 +458,7 @@ static glm::mat4 get_proj(
         base = glm::mat4(
             1,0,0,0,
             0,0,-1,0,
-            0,1,0,0,
+            0,-1,0,0,
             0,0,0,1
         );
         left_bottom = glm::vec2(bb_min.x, bb_min.z);
@@ -466,7 +466,12 @@ static glm::mat4 get_proj(
         break;
     default:
     case 2:
-        base = glm::mat4(1.0f);
+        base = glm::mat4(
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            0,0,0,1
+        );
         left_bottom = glm::vec2(bb_min.x, bb_min.y);
         right_top = glm::vec2(bb_max.x, bb_max.y);
         break;
@@ -474,8 +479,9 @@ static glm::mat4 get_proj(
     glm::mat4 proj = glm::ortho(
         left_bottom.x,
         right_top.x,
-        left_bottom.y,
+        // ReadPixels flips vertically, so we'll have to deal with that here.
         right_top.y,
+        left_bottom.y,
         near,
         far
     );
@@ -526,6 +532,7 @@ int main(int argc, char** argv)
         // Render scene from all axes
         for(unsigned axis = 0; axis < 3; ++axis)
         {
+            //if(axis == 0) ++axis;
             glm::uvec2 size = v.get_size(axis);
             glViewport(0, 0, size.x, size.y);
             // Render all layers

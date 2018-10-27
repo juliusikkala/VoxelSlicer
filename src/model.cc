@@ -85,14 +85,14 @@ model::model(const std::string& path)
                                 GL_BGRA,
                                 tex->pcData,
                                 glm::uvec2(tex->mWidth, tex->mHeight),
-                                GL_LINEAR_MIPMAP_LINEAR
+                                GL_NEAREST
                             )
                         ).first;
                     }
                     // External texture
                     else it = textures.emplace(
                         path,
-                        texture(path, GL_LINEAR_MIPMAP_LINEAR)
+                        texture(path, GL_NEAREST)
                     ).first;
                 }
                 outmat.tex = &it->second;
