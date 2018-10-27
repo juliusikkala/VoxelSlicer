@@ -33,6 +33,7 @@
 #define HELP 1
 #define DIMENSIONS 'd'
 #define INTERPOLATION 'i'
+#define FILL 'f'
 #define OUTPUT 'o'
 
 struct
@@ -52,7 +53,7 @@ const std::string fshader_textured =
     "uniform sampler2D albedo_tex;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(abs(dFdx(pos.z)) > 2.0 || abs(dFdy(pos.z)) > 2.0) discard;\n"
+    "    if(abs(dFdx(pos.z)) > 4.0 || abs(dFdy(pos.z)) > 4.0) discard;\n"
     "    color = texture(albedo_tex, uv);\n"
     "}";
 
@@ -76,7 +77,7 @@ const std::string fshader_no_texture =
     "uniform vec4 albedo;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(abs(dFdx(pos.z)) > 2.0 || abs(dFdy(pos.z)) > 2.0) discard;\n"
+    "    if(abs(dFdx(pos.z)) > 4.0 || abs(dFdy(pos.z)) > 4.0) discard;\n"
     "    color = albedo;\n"
     "}";
 
@@ -91,10 +92,21 @@ const std::string vshader_no_texture =
     "    pos = p.xyz;\n"
     "}";
 
+enum fill_mode
+{
+    FILL_NONE = 0,
+    FILL_FLATPLUS,
+    FILL_VOLUMEPLUS,
+    FILL_FLATY,
+    FILL_FLATX,
+    FILL_FLATZ
+};
+
 struct
 {
     std::string input_path;
     GLint interpolation = GL_LINEAR_MIPMAP_LINEAR;
+    fill_mode fill = FILL_NONE;
     std::string output_path = "slice";
     glm::ivec3 dim = glm::ivec3(-1);
 } options;
@@ -108,11 +120,13 @@ static bool parse_args(int argc, char** argv)
         { "dimensions", required_argument, NULL, DIMENSIONS },
         { "output", required_argument, NULL, OUTPUT },
         { "interpolation", required_argument, NULL, INTERPOLATION },
+        { "fill", required_argument, NULL, FILL }
     };
 
     int val = 0;
-    while((val = getopt_long(argc, argv, "d:o:i:", longopts, &indexptr)) != -1)
-    {
+    while(
+        (val = getopt_long(argc, argv, "d:o:i:f:", longopts, &indexptr)) != -1
+    ){
         char* endptr = optarg-1;
         unsigned axis = 0;
         switch(val)
@@ -155,6 +169,24 @@ static bool parse_args(int argc, char** argv)
                 goto help_print;
             }
             break;
+        case FILL:
+            if(!strcmp(optarg, "f+") || !strcmp(optarg, "flatplus"))
+                options.fill = FILL_FLATPLUS;
+            else if(!strcmp(optarg, "v+") || !strcmp(optarg, "volumeplus"))
+                options.fill = FILL_VOLUMEPLUS;
+            else if(!strcmp(optarg, "fy") || !strcmp(optarg, "flaty"))
+                options.fill = FILL_FLATY;
+            else if(!strcmp(optarg, "fx") || !strcmp(optarg, "flatx"))
+                options.fill = FILL_FLATX;
+            else if(!strcmp(optarg, "fz") || !strcmp(optarg, "flatz"))
+                options.fill = FILL_FLATZ;
+            else if(!strcmp(optarg, "fn") || !strcmp(optarg, "none"))
+                options.fill = FILL_NONE;
+            else {
+                printf("Unknown fill mode %s\n", optarg);
+                goto help_print;
+            }
+            break;
         case HELP:
             goto help_print;
         default:
@@ -172,17 +204,33 @@ static bool parse_args(int argc, char** argv)
 
 help_print:
     printf(
-        "Usage: %s [-d dimensions] [-o output_prefix] model_file\n"
+        "Usage: %s [-d dimensions] [-o output_prefix] [-i interpolation] "
+        "[-f fill_type] model_file\n"
         "\ndimensions defines the size of the output. It can have one of the "
-        "following\nformats:\n"
+        "following formats:\n"
         "\tWIDTHxHEIGHTxLAYERS\n"
         "\tWIDTHxLAYERS\n"
-        "\tLAYERS\n\n"
+        "\tLAYERS\n"
         "WIDTH and HEIGHT define the size of the output image, LAYERS defines "
-        "the number\nof output images. If either HEIGHT or WIDTH are missing, "
-        "they are calculated\nbased on model dimensions such that the aspect "
+        "the number of output images. If either HEIGHT or WIDTH are missing, "
+        "they are calculated based on model dimensions such that the aspect "
         "ratio is correct.\n"
-        "\noutput_prefix is the prefix for all output images.\n",
+        "\noutput_prefix is the prefix for all output images.\n"
+        "\ninterpolation is the texture interpolation mode used. It must be "
+        "one of the following:\n"
+        "\tnearest\n"
+        "\tlinear\n"
+        "\tmipmap\n"
+        "\n-f enables volume filling. This will fill all volume enclosed by "
+        "the outermost surfaces. It doesn't detect fully enclosed cavities, "
+        "so those will be filled as well. Note that filling may be very "
+        "slow. It can also fail if voxelization contains holes. fill_type may "
+        "be one of the following:\n"
+        "\tflatplus\n"
+        "\tvolumeplus\n"
+        "\tflatx\n"
+        "\tflaty\n"
+        "\tflatz\n",
         argv[0]
     );
     return false;
@@ -320,7 +368,7 @@ struct voxel
 class volume
 {
 public:
-    volume(glm::uvec3 dim)
+    explicit volume(glm::uvec3 dim)
     :   voxels(new voxel[dim.x*dim.y*dim.z]),
         dim(dim)
     {
@@ -328,6 +376,8 @@ public:
         layer_buffer = new uint8_t[sz.x*sz.y*4];
         stencil_buffer = new uint8_t[sz.x*sz.y];
     }
+
+    volume(const volume& other) = delete;
 
     ~volume()
     {
@@ -403,6 +453,162 @@ public:
         }
     }
 
+    void fill(model& m, fill_mode mode)
+    {
+        glm::vec3 bb_min, bb_max;
+        m.get_bb(bb_min, bb_max);
+        glm::vec3 size = bb_max - bb_min;
+        glm::vec3 weights = glm::vec3(dim)/size;
+
+        bool* outside = new bool[dim.x*dim.y*dim.z];
+        // Set initial value for 'outside'
+        int o = 0;
+        for(unsigned z = 0; z < dim.z; ++z)
+        {
+            for(unsigned y = 0; y < dim.y; ++y)
+            {
+                for(unsigned x = 0; x < dim.x; ++x, ++o)
+                {
+                    outside[o] = 
+                        (x == 0 || x == dim.x-1) ||
+                        (y == 0 || y == dim.y-1) ||
+                        (z == 0 || z == dim.z-1);
+                }
+            }
+        }
+        // Find all outside voxels
+        bool filled_this_iteration;
+        do
+        {
+            filled_this_iteration = false;
+            o = dim.x*dim.y;
+            for(unsigned z = 1; z < dim.z-1; ++z)
+            {
+                o += dim.x;
+                for(unsigned y = 1; y < dim.y-1; ++y)
+                {
+                    ++o;
+                    for(unsigned x = 1; x < dim.x-1; ++x, ++o)
+                    {
+                        if(outside[o]) continue;
+                        // Check neighbors for non-walled outside voxels
+                        int left = o - 1;
+                        int right = o + 1;
+                        int front = o - dim.x;
+                        int back = o + dim.x;
+                        int above = o + dim.x*dim.y;
+                        int below = o - dim.x*dim.y;
+                        if(voxels[o].count)
+                        {
+                            if(
+                                outside[left] ||
+                                outside[right] ||
+                                outside[front] ||
+                                outside[back] ||
+                                outside[above] ||
+                                outside[below]
+                            ) filled_this_iteration = outside[o] = true;
+                        }
+                        else
+                        {
+                            if(
+                                (outside[left] && !voxels[left].count) ||
+                                (outside[right] && !voxels[right].count) ||
+                                (outside[front] && !voxels[front].count) ||
+                                (outside[back] && !voxels[back].count) ||
+                                (outside[above] && !voxels[above].count) ||
+                                (outside[below] && !voxels[below].count)
+                            ) filled_this_iteration = outside[o] = true;
+                        }
+                    }
+                    ++o;
+                }
+                o += dim.x;
+            }
+        }
+        while(filled_this_iteration);
+        // Colorize inside voxels
+        voxel* buf = new voxel[dim.x*dim.y*dim.z];
+        unsigned first_n = 0;
+        unsigned n_len = 0;
+        switch(mode)
+        {
+        case FILL_FLATPLUS:
+            first_n = 0;
+            n_len = 4;
+            break;
+        default:
+        case FILL_VOLUMEPLUS:
+            first_n = 0;
+            n_len = 6;
+            break;
+        case FILL_FLATX:
+            first_n = 0;
+            n_len = 2;
+            break;
+        case FILL_FLATY:
+            first_n = 2;
+            n_len = 2;
+            break;
+        case FILL_FLATZ:
+            first_n = 4;
+            n_len = 2;
+            break;
+        }
+        unsigned end_n = first_n + n_len;
+
+        do
+        {
+            memcpy(buf, voxels, sizeof(voxel)*dim.x*dim.y*dim.z);
+            filled_this_iteration = false;
+            o = dim.x*dim.y;
+            for(unsigned z = 1; z < dim.z-1; ++z)
+            {
+                o += dim.x;
+                for(unsigned y = 1; y < dim.y-1; ++y)
+                {
+                    ++o;
+                    for(unsigned x = 1; x < dim.x-1; ++x, ++o)
+                    {
+                        if(outside[o] || voxels[o].count) continue;
+                        // Check neighbors for walls to average
+                        int neighbors[] = {
+                            o - 1,
+                            o + 1,
+                            o - (int)dim.x,
+                            o + (int)dim.x,
+                            o + (int)(dim.x*dim.y),
+                            o - (int)(dim.x*dim.y)
+                        };
+
+                        glm::vec4 average_color(0);
+                        float count = 0;
+
+                        for(unsigned i = first_n; i < end_n; ++i)
+                        {
+                            int n = neighbors[i];
+                            float weight = weights[i/2];
+                            if(buf[n].count)
+                            {
+                                average_color += buf[n].color*weight;
+                                count += weight;
+                            }
+                        }
+                        if(count == 0.0f) continue;
+                        voxels[o].color = average_color / count;
+                        voxels[o].count = 1;
+                        filled_this_iteration = true;
+                    }
+                    ++o;
+                }
+                o += dim.x;
+            }
+        }
+        while(filled_this_iteration);
+        delete [] buf;
+        delete [] outside;
+    }
+
     void write_layers(const std::string& path_prefix, unsigned axis)
     {
         glm::uvec2 size = get_size(axis);
@@ -434,7 +640,7 @@ public:
     }
 
 private:
-    struct voxel* voxels;
+    voxel* voxels;
     glm::uvec3 dim;
     uint8_t* layer_buffer;
     uint8_t* stencil_buffer;
@@ -581,6 +787,8 @@ int main(int argc, char** argv)
                 }
             }
         }
+
+        if(options.fill != FILL_NONE) v.fill(*m, options.fill);
 
         v.write_layers(options.output_path, 2);
     }
