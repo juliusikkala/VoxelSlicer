@@ -33,7 +33,11 @@ public:
     ~model();
 
     void init_gl();
-    void draw(glm::mat4 proj, shader& textured, shader& no_texture);
+    void draw(
+        glm::mat4 proj,
+        shader* textured,
+        shader* no_texture
+    );
 
     void get_bb(glm::vec3& bb_min, glm::vec3& bb_max) const;
 

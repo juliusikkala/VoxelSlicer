@@ -50,17 +50,26 @@ struct
 
 const std::string fshader_textured = 
     "#version 330 core\n"
-    "in vec3 pos;\n"
     "in vec2 uv;\n"
     "uniform sampler2D albedo_tex;\n"
-    "uniform bool use_angle_cull;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(\n"
-    "        use_angle_cull &&\n"
-    "        (abs(dFdx(pos.z)) > 16.0 || abs(dFdy(pos.z)) > 16.0)\n"
-    "    ) discard;\n"
     "    color = texture(albedo_tex, uv);\n"
+    "}";
+
+/* This is used to determine per-pixel miplevel, which is then used to determine
+ * voxel priority. This shader requires newer GLSL than the other due to
+ * textureQueryLod.
+ */
+const std::string fshader_priority = 
+    "#version 400 core\n"
+    "in vec2 uv;\n"
+    "uniform sampler2D albedo_tex;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    color = vec4(\n"
+    "       textureQueryLod(albedo_tex, uv).y/255.0f,0,0,0\n"
+    "    );\n"
     "}";
 
 const std::string vshader_textured = 
@@ -69,17 +78,14 @@ const std::string vshader_textured =
     "layout (location = 1) in vec2 in_uv;\n"
     "uniform mat4 mvp;\n"
     "out vec2 uv;\n"
-    "out vec3 pos;\n"
     "void main() {\n"
     "    vec4 p = mvp * vec4(in_pos, 1.0f);\n"
     "    gl_Position = p;\n"
-    "    pos = p.xyz;\n"
     "    uv = in_uv;\n"
     "}";
 
 const std::string fshader_no_texture = 
     "#version 330 core\n"
-    "in vec3 pos;\n"
     "uniform vec4 albedo;\n"
     "out vec4 color;\n"
     "void main() {\n"
@@ -90,11 +96,9 @@ const std::string vshader_no_texture =
     "#version 330 core\n"
     "layout (location = 0) in vec3 in_pos;\n"
     "uniform mat4 mvp;\n"
-    "out vec3 pos;\n"
     "void main() {\n"
     "    vec4 p = mvp * vec4(in_pos, 1.0f);\n"
     "    gl_Position = p;\n"
-    "    pos = p.xyz;\n"
     "}";
 
 enum fill_mode
@@ -380,6 +384,7 @@ struct voxel
 {
     glm::vec4 color = glm::vec4(0);
     unsigned count = 0;
+    unsigned priority = ~0;
 };
 
 class volume
@@ -390,8 +395,11 @@ public:
         dim(dim)
     {
         glm::uvec2 sz = max2(dim);
-        layer_buffer = new uint8_t[sz.x*sz.y*4];
-        stencil_buffer = new uint8_t[sz.x*sz.y];
+        unsigned area = sz.x*sz.y;
+        layer_buffer = new uint8_t[area*4];
+        stencil_buffer = new uint8_t[area];
+        priority_buffer = new uint8_t[area];
+        memset(priority_buffer, 0, sizeof(*priority_buffer)*area);
     }
 
     volume(const volume& other) = delete;
@@ -429,6 +437,30 @@ public:
         }
     }
 
+    void read_gl_priority(unsigned axis)
+    {
+        glm::uvec2 size = get_size(axis);
+        glReadPixels(
+            0, 0,
+            size.x, size.y,
+            GL_RGBA, GL_UNSIGNED_BYTE, layer_buffer
+        );
+        glReadPixels(
+            0, 0,
+            size.x, size.y,
+            GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencil_buffer
+        );
+
+        for(unsigned y = 0; y < size.y; ++y)
+        {
+            for(unsigned x = 0; x < size.x; ++x)
+            {
+                unsigned o = x + y * size.x;
+                priority_buffer[o] = stencil_buffer[o] ? layer_buffer[o*4] : 0;
+            }
+        }
+    }
+
     void read_gl_layer(
         unsigned layer_index,
         unsigned axis,
@@ -453,20 +485,22 @@ public:
                 unsigned o = x + y * size.x;
                 if(stencil_buffer[o] == 0) continue;
 
-                glm::vec4 color = {
-                    layer_buffer[o*4], layer_buffer[o*4+1],
-                    layer_buffer[o*4+2], layer_buffer[o*4+3]
-                };
-                color /= 255;
                 glm::uvec3 pos = get_layer_pos(
                     layer_index, axis, glm::uvec2(x, y)
                 );
 
                 voxel& v = operator[](pos);
-                if(force_overwrite)
+                glm::vec4 color = {
+                    layer_buffer[o*4], layer_buffer[o*4+1],
+                    layer_buffer[o*4+2], layer_buffer[o*4+3]
+                };
+                color /= 255;
+
+                if(force_overwrite || v.priority > priority_buffer[o])
                 {
                     v.color = color;
                     v.count = 1;
+                    v.priority = priority_buffer[o];
                 }
                 else
                 {
@@ -705,6 +739,7 @@ private:
     glm::uvec3 dim;
     uint8_t* layer_buffer;
     uint8_t* stencil_buffer;
+    uint8_t* priority_buffer;
 };
 
 static glm::uvec3 deduce_dim(glm::ivec3 arg, model& m)
@@ -811,11 +846,15 @@ int main(int argc, char** argv)
     {
         shader no_texture(vshader_no_texture, fshader_no_texture);
         shader textured(vshader_textured, fshader_textured);
+        std::unique_ptr<shader> priority;
+        if(options.interpolation == GL_LINEAR_MIPMAP_LINEAR)
+            priority.reset(new shader(vshader_textured, fshader_priority));
 
         // Both front and back faces in one pass to avoid extra passes
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_STENCIL_TEST);
+        glDisable(GL_BLEND);
         glStencilFunc(GL_ALWAYS, 1, 0xFF);
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
         glStencilMask(0xFF);
@@ -830,6 +869,9 @@ int main(int argc, char** argv)
         glClearStencil(0);
 
         m->init_gl();
+
+        glm::vec3 bb_min, bb_max;
+        m->get_bb(bb_min, bb_max);
 
         // Render scene from 6 directions
         for(unsigned dir = 0; dir < 2; ++dir)
@@ -854,13 +896,26 @@ int main(int argc, char** argv)
                 // Render all layers
                 for(unsigned layer = 0; layer < dim[axis]; ++layer)
                 {
+                    glm::mat4 proj(get_proj(dim, axis, layer, *m));
+
+                    if(priority)
+                    {
+                        glClear(
+                            GL_COLOR_BUFFER_BIT |
+                            GL_STENCIL_BUFFER_BIT |
+                            GL_DEPTH_BUFFER_BIT
+                        );
+                        m->draw(proj, priority.get(), nullptr);
+                        v.read_gl_priority(axis);
+                    }
+
                     glClear(
                         GL_COLOR_BUFFER_BIT |
                         GL_STENCIL_BUFFER_BIT |
                         GL_DEPTH_BUFFER_BIT
                     );
-                    glm::mat4 proj(get_proj(dim, axis, layer, *m));
-                    m->draw(proj, textured, no_texture);
+                    m->draw(proj, &textured, &no_texture);
+
                     v.read_gl_layer(layer, axis, force_overwrite);
                 }
             }
