@@ -77,3 +77,58 @@ interpolation on large-scale images.
 
 `-s` enables single-file output. The output layers are arranged vertically one
 after another.
+
+## Supported formats
+
+For the 3D models, all formats supported by Assimp should work. This includes:
+
+* .fbx
+* .dae
+* .gltf
+* .blend
+* .obj
+* .ply
+* .stl
+
+And many more less known formats. For textures, all formats supported by
+stb\_image should work. These are:
+
+* PNG
+* JPEG
+* TGA
+* BMP
+* PSD (kind of)
+* GIF
+* HDR
+* PIC
+* PNM
+
+Exported images are always PNGs.
+
+## Images
+
+Very few slices are used for the example images so that they are not too large.
+
+### Crytek Sponza
+
+```sh
+voxslice sponza.obj -d 512x16 -s
+```
+
+![sponza](https://user-images.githubusercontent.com/1752365/47613946-79547200-daa0-11e8-90e9-a187acb6fd06.png) ![sponzaslice](https://user-images.githubusercontent.com/1752365/47613753-799f3e00-da9d-11e8-8b84-fd318d7d0bb1.png)
+
+### Infinite head scan
+
+```sh
+voxslice head.OBJ -d 512x8 -s -fvolumeplus
+```
+
+![lpshead](https://user-images.githubusercontent.com/1752365/47613752-799f3e00-da9d-11e8-89e5-ce7937dd3342.png) ![lpsheadslice](https://user-images.githubusercontent.com/1752365/47613755-799f3e00-da9d-11e8-93af-eec0ecbd25e8.png)
+
+### Stanford Bunny
+
+```sh
+voxslice redbunny.obj -d 512x8 -s -fvolumeplus
+```
+
+![bunny](https://user-images.githubusercontent.com/1752365/47613754-799f3e00-da9d-11e8-8e75-4a50d8f2e14e.png) ![bunnyslices](https://user-images.githubusercontent.com/1752365/47613756-7a37d480-da9d-11e8-89ed-142b01b30809.png)
