@@ -54,7 +54,7 @@ const std::string fshader_textured =
     "uniform sampler2D albedo_tex;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(abs(dFdx(pos.z)) > 4.0 || abs(dFdy(pos.z)) > 4.0) discard;\n"
+    "    if(abs(dFdx(pos.z)) > 8.0 || abs(dFdy(pos.z)) > 8.0) discard;\n"
     "    color = texture(albedo_tex, uv);\n"
     "}";
 
@@ -78,7 +78,7 @@ const std::string fshader_no_texture =
     "uniform vec4 albedo;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(abs(dFdx(pos.z)) > 4.0 || abs(dFdy(pos.z)) > 4.0) discard;\n"
+    "    if(abs(dFdx(pos.z)) > 8.0 || abs(dFdy(pos.z)) > 8.0) discard;\n"
     "    color = albedo;\n"
     "}";
 
@@ -711,8 +711,8 @@ static glm::mat4 get_proj(
     glm::vec3 bb_min, bb_max;
     m.get_bb(bb_min, bb_max);
     glm::vec3 size = bb_max - bb_min;
-    float depth = size[axis];
-    float step = depth/dim[axis];
+
+    float step = size[axis]/dim[axis];
     float far = bb_max[axis] - step * (layer + 1);
     float near = bb_max[axis] - step * layer;
     glm::vec2 left_bottom;
