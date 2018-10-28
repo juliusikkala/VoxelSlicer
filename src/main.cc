@@ -36,6 +36,7 @@
 #define FILL 'f'
 #define SINGLE 's'
 #define OUTPUT 'o'
+#define FRONT 'r'
 
 struct
 {
@@ -112,6 +113,7 @@ struct
     GLint interpolation = GL_LINEAR_MIPMAP_LINEAR;
     fill_mode fill = FILL_NONE;
     bool single_file = false;
+    bool front = false;
     std::string output_path = "slice";
     glm::ivec3 dim = glm::ivec3(-1);
 } options;
@@ -125,12 +127,13 @@ static bool parse_args(int argc, char** argv)
         { "dimensions", required_argument, NULL, DIMENSIONS },
         { "output", required_argument, NULL, OUTPUT },
         { "interpolation", required_argument, NULL, INTERPOLATION },
-        { "fill", required_argument, NULL, FILL }
+        { "fill", required_argument, NULL, FILL },
+        { "front", no_argument, NULL, FRONT },
     };
 
     int val = 0;
     while(
-        (val = getopt_long(argc, argv, "d:o:i:f:s", longopts, &indexptr)) != -1
+        (val = getopt_long(argc, argv, "d:o:i:f:sr", longopts, &indexptr)) != -1
     ){
         char* endptr = optarg-1;
         unsigned axis = 0;
@@ -195,6 +198,9 @@ static bool parse_args(int argc, char** argv)
         case SINGLE:
             options.single_file = true;
             break;
+        case FRONT:
+            options.front = true;
+            break;
         case HELP:
             goto help_print;
         default:
@@ -213,7 +219,7 @@ static bool parse_args(int argc, char** argv)
 help_print:
     printf(
         "Usage: %s [-d dimensions] [-o output_prefix] [-i interpolation] "
-        "[-f fill_type] [-s] model_file\n"
+        "[-f fill_type] [-s] [-r] model_file\n"
         "\ndimensions defines the size of the output. It can have one of the "
         "following formats:\n"
         "\tWIDTHxHEIGHTxLAYERS\n"
@@ -240,7 +246,8 @@ help_print:
         "\tflaty\n"
         "\tflatz\n"
         "\n-s enables single-file output. The output layers are arranged "
-        "vertically one after another.\n",
+        "vertically one after another.\n"
+        "\n-r enables preferring front-face for the z-axis.\n",
         argv[0]
     );
     return false;
@@ -402,13 +409,6 @@ public:
         return *v;
     }
 
-    void write_voxel(glm::uvec3 pos, glm::vec4 color)
-    {
-        voxel& v = operator[](pos);
-        v.color = ((float)v.count * v.color + color) / (v.count + 1.0f);
-        v.count++;
-    }
-
     glm::uvec3 get_dim() const { return dim; }
 
     glm::uvec2 get_size(unsigned axis) const
@@ -429,8 +429,11 @@ public:
         }
     }
 
-    void read_gl_layer(unsigned layer_index, unsigned axis)
-    {
+    void read_gl_layer(
+        unsigned layer_index,
+        unsigned axis,
+        bool force_overwrite
+    ){
         glm::uvec2 size = get_size(axis);
         glReadPixels(
             0, 0,
@@ -458,7 +461,19 @@ public:
                 glm::uvec3 pos = get_layer_pos(
                     layer_index, axis, glm::uvec2(x, y)
                 );
-                write_voxel(pos, color);
+
+                voxel& v = operator[](pos);
+                if(force_overwrite)
+                {
+                    v.color = color;
+                    v.count = 1;
+                }
+                else
+                {
+                    v.color = ((float)v.count * v.color + color) /
+                        (v.count + 1.0f);
+                    v.count++;
+                }
             }
         }
     }
@@ -820,9 +835,20 @@ int main(int argc, char** argv)
         for(unsigned dir = 0; dir < 2; ++dir)
         {
             glCullFace(dir?GL_FRONT:GL_BACK);
+            glDepthFunc(dir?GL_LEQUAL:GL_GEQUAL);
+            glClearDepth(dir?1:0);
 
             for(unsigned axis = 0; axis < 3; ++axis)
             {
+                bool force_overwrite = false;
+                if(options.front && axis == 2)
+                {
+                    if(dir == 0) continue;
+                    // If this occurs, it's on the last iteration of both loops
+                    // so no need to clean up.
+                    glDisable(GL_CULL_FACE);
+                    force_overwrite = true;
+                }
                 glm::uvec2 size = v.get_size(axis);
                 glViewport(0, 0, size.x, size.y);
                 // Render all layers
@@ -835,7 +861,7 @@ int main(int argc, char** argv)
                     );
                     glm::mat4 proj(get_proj(dim, axis, layer, *m));
                     m->draw(proj, textured, no_texture);
-                    v.read_gl_layer(layer, axis);
+                    v.read_gl_layer(layer, axis, force_overwrite);
                 }
             }
         }

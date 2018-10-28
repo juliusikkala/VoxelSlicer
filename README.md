@@ -33,7 +33,7 @@ The resulting executable is `build/voxslicer`.
 ## Usage
 
 ```sh
-voxslice [-d dimensions] [-o output_prefix] [-i interpolation] [-f fill_type] model_file
+voxslice [-d dimensions] [-o output_prefix] [-i interpolation] [-f fill_type] [-s] [-r] model_file
 ```
 
 `dimensions` defines the size of the voxel volume. It can have one of the
@@ -77,6 +77,8 @@ interpolation on large-scale images.
 
 `-s` enables single-file output. The output layers are arranged vertically one
 after another.
+
+`-r` enables preferring front-face for the z-axis.
 
 ## Supported formats
 
