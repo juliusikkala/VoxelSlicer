@@ -136,10 +136,15 @@ void model::draw(glm::mat4 proj, shader& textured, shader& no_texture)
         {
             textured.bind();
             GLint albedo_tex = textured.get_uniform("albedo_tex");
+            GLint use_angle_cull = textured.get_uniform("use_angle_cull");
             mvp = textured.get_uniform("mvp");
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, mat->tex->tex);
             glUniform1i(albedo_tex, 0);
+            glUniform1i(
+                use_angle_cull,
+                mat->tex->interpolation == GL_LINEAR_MIPMAP_LINEAR
+            );
         }
         else
         {

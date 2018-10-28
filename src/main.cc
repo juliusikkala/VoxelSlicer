@@ -52,9 +52,13 @@ const std::string fshader_textured =
     "in vec3 pos;\n"
     "in vec2 uv;\n"
     "uniform sampler2D albedo_tex;\n"
+    "uniform bool use_angle_cull;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(abs(dFdx(pos.z)) > 8.0 || abs(dFdy(pos.z)) > 8.0) discard;\n"
+    "    if(\n"
+    "        use_angle_cull &&\n"
+    "        (abs(dFdx(pos.z)) > 16.0 || abs(dFdy(pos.z)) > 16.0)\n"
+    "    ) discard;\n"
     "    color = texture(albedo_tex, uv);\n"
     "}";
 
@@ -78,7 +82,6 @@ const std::string fshader_no_texture =
     "uniform vec4 albedo;\n"
     "out vec4 color;\n"
     "void main() {\n"
-    "    if(abs(dFdx(pos.z)) > 8.0 || abs(dFdy(pos.z)) > 8.0) discard;\n"
     "    color = albedo;\n"
     "}";
 
