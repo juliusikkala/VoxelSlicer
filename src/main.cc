@@ -409,6 +409,7 @@ public:
         delete [] voxels;
         delete [] layer_buffer;
         delete [] stencil_buffer;
+        delete [] priority_buffer;
     }
 
     voxel& operator[](glm::uvec3 pos) const
